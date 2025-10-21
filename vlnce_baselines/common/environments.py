@@ -1,5 +1,7 @@
 import numpy as np
+import torch
 from typing import Optional
+from copy import deepcopy
 
 import habitat
 from habitat import Config, Dataset
@@ -24,7 +26,7 @@ class VLNCEDaggerEnv(habitat.RLEnv):
         self.steppppp = 0
 
         if self.config.use_ddppo:
-            self.ddppo_action_maker = DDPPOActionMaker(config, self._env)
+            self.ddppo_action_maker = DDPPOActionMaker(config, self._env, config.lamda)
         else:
             self.gt_map_action_maker = GTMapActionMaker(config)
 
@@ -32,20 +34,51 @@ class VLNCEDaggerEnv(habitat.RLEnv):
         observation = super(VLNCEDaggerEnv, self).reset()
         return observation
 
-    def step(self, action, prog, epidsode_reset_flag=None, depth_img=None):
+    def get_agent_state(self):
+        return deepcopy(self._env._sim.get_agent_state())
+
+    def get_ddppo_state(self):
+            hidden_state = self.ddppo_action_maker.l_policy.hidden_state.detach()
+            prev_actions = self.ddppo_action_maker.l_policy.prev_actions.detach()
+            return (hidden_state, prev_actions)
+
+    def set_agent_state(self, agent_state):
+        self._env._sim.set_agent_state(agent_state.position, agent_state.rotation)
+        self.steppppp -= 1
+
+    def set_ddppo_state(self, ddppo_state):
+        (
+            self.ddppo_action_maker.l_policy.hidden_state, self.ddppo_action_maker.l_policy.prev_actions
+        ) = ddppo_state
+        self.ddppo_action_maker.abs_poses.pop()
+        self.ddppo_action_maker.agent_height.pop()
+
+    def step(self, action, prog, epidsode_reset_flag=None, depth_img=None, get_distribution=False):
         if self.config.use_ddppo and epidsode_reset_flag is True:
             self.ddppo_action_maker.l_policy.reset()
             self.ddppo_action_maker.sg_reset()
             self.steppppp = 0
-
-        agent_state = self._env._sim.get_agent_state()
-        if self.config.use_ddppo:
-            self.waypoint = self.ddppo_action_maker.preprocess(action, agent_state)
-            action_choice = self.ddppo_action_maker.action_decision(self.steppppp, self.waypoint, depth_img)
+   
+        ddppo_state = deepcopy(self.get_ddppo_state())
+        agent_state = deepcopy(self._env._sim.get_agent_state())
+        
+        if not isinstance(action, int):
+            if self.config.use_ddppo:
+                self.waypoint = self.ddppo_action_maker.preprocess(action, agent_state)
+                action_choice, distribution = self.ddppo_action_maker.action_decision(self.steppppp, self.waypoint, depth_img)
+            else:
+                self.waypoint = self.gt_map_action_maker.preprocess(action, agent_state)
+                action_choice = self.gt_map_action_maker.action_decision(self.waypoint, self.follower)
         else:
-            self.waypoint = self.gt_map_action_maker.preprocess(action, agent_state)
-            action_choice = self.gt_map_action_maker.action_decision(self.waypoint, self.follower)
+            action_choice = action
+            agent_pose, y_height = self.ddppo_action_maker.utils.get_sim_location(agent_state) 
+            self.ddppo_action_maker.abs_poses.append(agent_pose)
+            self.ddppo_action_maker.agent_height.append(y_height)
 
+        if get_distribution:
+            self.set_ddppo_state(ddppo_state)
+            return distribution, None, None, None    
+            
         stop = self.decide_stop(prog)
         if stop:
             action_choice = 0

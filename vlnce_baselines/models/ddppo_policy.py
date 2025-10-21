@@ -12,7 +12,7 @@ from habitat_baselines.rl.ddppo.policy.resnet_policy import PointNavResNetPolicy
 
 
 class DdppoPolicy(nn.Module):
-    def __init__(self, path):
+    def __init__(self, path, lamda=0):
         super().__init__()
         spaces = {
             'pointgoal_with_gps_compass': Box(
@@ -41,6 +41,7 @@ class DdppoPolicy(nn.Module):
             num_recurrent_layers=2,
             rnn_type='LSTM',
             backbone='resnet50',
+            lamda=lamda
         )
         self.actor_critic.load_state_dict(
             {
@@ -58,14 +59,13 @@ class DdppoPolicy(nn.Module):
         batch = {
             'pointgoal_with_gps_compass': goal.view(1, -1),
             'depth': depth.view(1, depth.shape[0], depth.shape[1], depth.shape[2]),
-        }
-
+        } 
         if t ==0:
             not_done_masks = torch.zeros(1, 1, dtype=torch.bool, device=depth.device)
         else:
             not_done_masks = torch.ones(1, 1, dtype=torch.bool, device=depth.device)
-
-        _, actions, _, self.hidden_state = self.actor_critic.act(
+        
+        _, actions, _, self.hidden_state, distribution = self.actor_critic.act(
             batch,
             self.hidden_state.to(depth.device),
             self.prev_actions.to(depth.device),
@@ -74,7 +74,7 @@ class DdppoPolicy(nn.Module):
         )
         self.prev_actions = torch.clone(actions)
 
-        return actions.item()
+        return actions.item(), distribution
 
     def reset(self):
         self.hidden_state = torch.zeros_like(self.hidden_state)

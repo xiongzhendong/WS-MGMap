@@ -153,3 +153,6 @@ stats_*.json
 # Other
 habitat-lab
 temp
+
+$
+output

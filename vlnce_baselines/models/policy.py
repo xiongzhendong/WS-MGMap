@@ -3,6 +3,7 @@ from gym import Space
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from copy import deepcopy
 
 from habitat import Config
 from habitat_baselines.rl.ppo.policy import CriticHead
@@ -31,6 +32,22 @@ class BasePolicy(nn.Module):
         _, rgb_embedding_proj = self.net.rgb_encoder(observations)
         self.net.rgb_mapping_module(rgb_embedding_proj, observations, masks)
 
+    def act_sim(
+        self,
+        observations,
+        rnn_hidden_states,
+        prev_actions,
+        masks):
+        full_global_map = deepcopy(self.net.rgb_mapping_module.full_global_map)
+        features, _, _ = self.net(deepcopy(observations), deepcopy(rnn_hidden_states), prev_actions, masks)
+        self.net.rgb_mapping_module.full_global_map = full_global_map
+        
+        prog = torch.tanh(self.prog_pred(features))
+        distribution = self.action_distribution(features)
+
+        return distribution, prog
+
+
     def act(
         self,
         observations,
@@ -50,7 +67,7 @@ class BasePolicy(nn.Module):
             action = distribution.mode()
         else:
             action = distribution.sample()
-
+            
         action_log_probs = distribution.log_probs(action)
 
         return value, action, action_log_probs, rnn_hidden_states

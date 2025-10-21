@@ -91,21 +91,26 @@ def run_exp(exp_config: str,
     config = get_config(exp_config, opts)
     config = set_saveDir_GPUs(config, run_type, model_dir, note, gpus, local_rank)
     config = refine_config(config, local_rank)
-    if local_rank == 0:
-        check_exist_file(config)
-        save_sh_n_codes(
-            config,
-            run_type,
-            ignore_dir=['habitat-lab', 'data', 'result', 'habitat-sim', 'temp']
-        )
-        save_config(config, run_type)
+    # if local_rank == 0:
+    #     check_exist_file(config)
+    #     save_sh_n_codes(
+    #         config,
+    #         run_type,
+    #         ignore_dir=['habitat-lab', 'data', 'result', 'habitat-sim', 'temp']
+    #     )
+    #     save_config(config, run_type)
     logger.add_filehandler(config.LOG_FILE)
+
+    config.defrost()
+    config.TASK_CONFIG.SEED = 200
+    # config.EVAL.EPISODE_COUNT = 300
+    config.freeze()
 
     random.seed(config.TASK_CONFIG.SEED)
     np.random.seed(config.TASK_CONFIG.SEED)
     torch.manual_seed(config.TASK_CONFIG.SEED)
     torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.deterministic = True 
 
     trainer_init = baseline_registry.get_trainer(config.TRAINER_NAME)
     assert trainer_init is not None, f"{config.TRAINER_NAME} is not supported"
@@ -120,4 +125,5 @@ def run_exp(exp_config: str,
 
 
 if __name__ == "__main__":
+    # import debugpy; debugpy.connect(("0.0.0.0", 5679))
     main()

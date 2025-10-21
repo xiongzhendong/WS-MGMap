@@ -6,6 +6,9 @@ TENSORBOARD_DIR: data/tensorboard_dirs/cma_aug_da_tune
 CHECKPOINT_FOLDER: data/checkpoints/cma_aug_da_tune
 EVAL_CKPT_PATH_DIR: data/checkpoints/cma_aug_da_tune
 
+# VIDEO_OPTION: ["disk"]  # options: "disk", "tensorboard"
+# VIDEO_DIR: output/videos/debug
+
 SENSORS: ['RGB_SENSOR', 'DEPTH_SENSOR']
 
 EVAL:

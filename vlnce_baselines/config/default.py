@@ -150,6 +150,8 @@ _C.same_level_train = False
 _C.ep_max_len = 200
 _C.step_num = 3
 _C.use_ddppo = False
+_C.lamda = 1.0
+_C.n_sample = 10
 
 
 def get_config(

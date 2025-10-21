@@ -10,7 +10,65 @@ from shlex import quote
 from typing import Dict, List
 
 import torch
+import math
 
+from scipy.ndimage import zoom
+def simulate_forward(num_envs, batch, zoom_factor=1.14, step_size=0.25):
+    for e in range(num_envs):
+        rgb = batch['rgb'][e].cpu()
+        depth = batch['depth'][e].cpu()
+        gps = batch['gps'][e].cpu()
+        camera_yaw = batch["compass"][e][0].cpu()
+        # --- 对 RGB 图像进行 Zoom In ---
+
+        # 1. 对 RGB 图像进行缩放
+        # 注意：只缩放高和宽，通道数保持不变，所以 zoom_factor 的第三个维度是 1
+        zoomed_rgb = zoom(rgb, (zoom_factor, zoom_factor, 1), order=1)
+
+        # 2. 计算裁剪区域
+        h, w, _ = rgb.shape
+        zh, zw, _ = zoomed_rgb.shape
+
+        # 计算裁剪的起始点
+        start_h = (zh - h) // 2
+        start_w = (zw - w) // 2
+
+        # 3. 从中心裁剪回原始尺寸
+        zoomed_in_rgb = zoomed_rgb[start_h:start_h + h, start_w:start_w + w, :]
+
+        # --- 对 Depth 图像进行 Zoom In ---
+
+        # 1. 对 Depth 图像进行缩放
+        # 对于深度图，通常使用最近邻插值(order=0)以避免产生不存在的深度值
+        # 通道维度同样不缩放
+        zoomed_depth = zoom(depth, (zoom_factor, zoom_factor, 1), order=0)
+
+        h, w, _ = depth.shape
+        zh, zw, _ = zoomed_depth.shape
+
+        start_h = (zh - h) // 2
+        start_w = (zw - w) // 2
+        
+        # 2. 从中心裁剪回原始尺寸
+        zoomed_in_depth = zoomed_depth[start_h:start_h + h, start_w:start_w + w, :]
+
+        # step_size = 0.25 单位：米
+
+        # 3. 更新gps位置
+        # delta_x = 距离 * cos(角度)
+        # delta_y = 距离 * sin(角度)
+        # 注意：np.cos() 和 np.sin() 的输入都是弧度
+        delta_x = step_size * np.cos(camera_yaw)
+        delta_y = step_size * np.sin(-camera_yaw)
+
+        # 3. 计算新的 GPS 位置
+        new_gps = gps + np.array([delta_x, delta_y], dtype=np.float32)
+
+        batch['rgb'][e] = torch.from_numpy(zoomed_in_rgb).to('cuda:0')
+        batch['depth'][e] = torch.from_numpy(zoomed_in_depth).to('cuda:0')
+        batch['gps'][e] = new_gps.to('cuda:0')
+
+    return batch
 
 def transform_obs(
     observations: List[Dict], instruction_sensor_uuid: str, device=None

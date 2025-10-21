@@ -23,8 +23,9 @@ from habitat_extensions.utils import observations_to_image
 
 from vlnce_baselines.models.policy import BasePolicy
 from vlnce_baselines.common.env_utils import construct_envs_auto_reset_false
-from vlnce_baselines.common.utils import transform_obs
-
+from vlnce_baselines.common.utils import transform_obs, simulate_forward
+#
+from copy import deepcopy
 
 class CommonTrainer(BaseRLTrainer):
     def __init__(self, config=None):
@@ -87,6 +88,8 @@ class CommonTrainer(BaseRLTrainer):
                     sum(p.numel() for p in self.actor_critic.parameters() if p.requires_grad)
                 )
             )
+            logger.info(f"[lamda: {self.config.lamda}, seed: {self.config.TASK_CONFIG.SEED}, episode: {self.config.EVAL.EPISODE_COUNT}]")
+   
 
     def save_checkpoint(self, file_name, extra_state: Optional[Dict] = None) -> None:
         """Save checkpoint with specified name.
@@ -210,7 +213,7 @@ class CommonTrainer(BaseRLTrainer):
                 # evaluate multiple checkpoints in order
                 num_ckpt = len(os.listdir(self.config.EVAL_CKPT_PATH_DIR))
                 prev_ckpt_ind = num_ckpt - 2
-                while True:
+                while prev_ckpt_ind > -2:
                     current_ckpt = None
                     while current_ckpt is None:
                         current_ckpt = poll_checkpoint_folder(
@@ -317,39 +320,54 @@ class CommonTrainer(BaseRLTrainer):
 
         pbar = tqdm.tqdm(total=sum(self.envs.number_of_episodes), dynamic_ncols=True, desc="Eval_ckpt_{}".format(str(training_step)))
         self.actor_critic.eval()
-        step = 0
+       
+        actions_simulate = None
         while (
             self.envs.num_envs > 0 and len(stats_episodes) < config.EVAL.EPISODE_COUNT
         ):
             current_episodes = self.envs.current_episodes()
+            if actions_simulate is not None:
+                count_step -= 1
 
             with torch.no_grad():
                 if count_step % config.step_num == 0 and count_step >= 24:
-                    (_, actions, _, eval_recurrent_hidden_states) = self.actor_critic.module.act(
-                        batch,
-                        eval_recurrent_hidden_states,
-                        prev_actions,
-                        not_done_masks,
-                        deterministic=True,
-                    )
+                    if actions_simulate is None:
+                        actions_simulate = self.action_simulator(
+                            batch, 
+                            eval_recurrent_hidden_states, 
+                            prev_actions, 
+                            not_done_masks, 
+                            epidsode_reset_flag
+                        )
+                    else:
+                        actions_simulate = None
+                        (_, actions, _, eval_recurrent_hidden_states) = self.actor_critic.module.act(
+                            batch,
+                            eval_recurrent_hidden_states,
+                            prev_actions,
+                            not_done_masks,
+                            deterministic=True,
+                        )
                 else:
                     self.actor_critic.module.update_map(batch, not_done_masks)
                 if count_step < 24:
                     actions = batch['waypoint'][:, :2]
                 prev_actions.copy_(actions)
 
-            step_inputs = [
-                {
-                    'action': actions[e].cpu(),
-                    'prog': self.actor_critic.module.prog[e].cpu().item() if count_step >= 24 else -1,
-                    'epidsode_reset_flag': epidsode_reset_flag ,
-                    'depth_img': observations[e]['depth'],
-                }
-                for e in range(self.envs.num_envs)
-            ]
-            outputs = self.envs.step(step_inputs) 
+                if actions_simulate is not None and isinstance(actions_simulate, list):
+                    outputs = actions_simulate
+                else:
+                    step_inputs = [
+                        {
+                            'action': actions[e].cpu() if actions_simulate is None else actions_simulate[e].cpu().item(),
+                            'prog': self.actor_critic.module.prog[e].cpu().item() if count_step >= 24 else -1,
+                            'epidsode_reset_flag': epidsode_reset_flag,
+                            'depth_img': observations[e]['depth'],
+                        }
+                        for e in range(self.envs.num_envs)
+                    ]
+                    outputs = self.envs.step(step_inputs) 
             epidsode_reset_flag = False
-            step += 1
             observations, _, dones, infos = [list(x) for x in zip(*outputs)]
             if len(config.VIDEO_OPTION) > 0 and not training:
                 for i in range(self.envs.num_envs):
@@ -410,6 +428,7 @@ class CommonTrainer(BaseRLTrainer):
                     logger.info(aggregated_stats)
 
             if np.array(dones).all():
+                actions_simulate = None
                 self.envs.resume_all()
                 observations = self.envs.reset()
                 epidsode_reset_flag = True
@@ -494,6 +513,7 @@ class CommonTrainer(BaseRLTrainer):
                 json.dump(stats_episodes, f)
 
         if not training:
+            logger.info(f"[lamda: {self.config.lamda}, seed: {self.config.TASK_CONFIG.SEED}, episode: {self.config.EVAL.EPISODE_COUNT}]")
             logger.info(f"Episodes evaluated: {num_episodes}")
             checkpoint_num = checkpoint_index + 1
             for k, v in aggregated_stats.items():
@@ -533,3 +553,75 @@ class CommonTrainer(BaseRLTrainer):
 
     def inference(self) -> None:
         pass
+    
+    def action_simulator(self, batch, rnn_hidden_states, prev_actions, not_done_masks, epidsode_reset_flag):
+        prev_distributions, self.actor_critic.module.prog = self.gt_distributions(
+            batch, 
+            rnn_hidden_states, 
+            prev_actions, 
+            not_done_masks, 
+            epidsode_reset_flag
+        )
+
+        agent_states = deepcopy(self.envs.gt_agent_states())
+        ddppo_states = deepcopy(self.envs.gt_ddppo_states())
+
+        entropy = torch.zeros((self.envs.num_envs, 3), device='cuda:0', dtype=torch.float32)
+        for action_choice in range(1,4):
+            step_inputs = [
+                {
+                    'action': action_choice,
+                    'prog': self.actor_critic.module.prog[e].cpu().item(),
+                    'epidsode_reset_flag': epidsode_reset_flag,
+                    'depth_img': batch['depth'][e],
+                } 
+                for e in range(self.envs.num_envs)
+            ]
+            if action_choice == 1:
+                new_batch = simulate_forward(self.envs.num_envs, deepcopy(batch))
+                dones = [False for _ in range(self.envs.num_envs)]
+            else:
+                outputs = self.envs.step(step_inputs)
+                observations, _, dones, _ = [list(x) for x in zip(*outputs)]
+                
+                if np.array(dones).any():
+                    return outputs
+                observations = transform_obs(
+                    observations, self.config.TASK_CONFIG.TASK.INSTRUCTION_SENSOR_UUID, self.device
+                )
+                new_batch = batch_obs(observations, self.device)
+
+            distributions, _ = self.gt_distributions(new_batch, rnn_hidden_states, prev_actions, not_done_masks)
+            entropy[:, action_choice - 1] = -(distributions * torch.log(distributions)).sum(dim=-1)
+            
+            if action_choice > 1:
+                self.envs.set_agent_states(agent_states)
+                self.envs.set_ddppo_states(ddppo_states)
+
+        _, actions_min_idx = torch.min(entropy - self.config.lamda * prev_distributions, dim=-1)
+    
+        return actions_min_idx + 1
+
+    def gt_distributions(self, batch, eval_recurrent_hidden_states, prev_actions, not_done_masks, epidsode_reset_flag=False):
+        distributions, prog = self.actor_critic.module.act_sim(batch, eval_recurrent_hidden_states, prev_actions, not_done_masks)
+        actions = distributions.sample((self.config.n_sample,))
+        
+        ddppo_distribution = torch.zeros((self.envs.num_envs, 3), device='cuda:0')
+        for i in range(self.config.n_sample):
+            step_inputs = [
+                {
+                    'action': actions[i][e].cpu(),
+                    'prog': prog[e].cpu().item(),
+                    'epidsode_reset_flag': epidsode_reset_flag,
+                    'depth_img': batch['depth'][e],
+                    'get_distribution': True
+                }
+                for e in range(self.envs.num_envs)
+            ]
+            outputs = self.envs.step(step_inputs)
+            distribution = torch.stack([list(x) for x in zip(*outputs)][0], dim=1).squeeze(0)
+            ddppo_distribution += distribution[:, 1:].to('cuda:0')
+
+        ddppo_distribution = torch.clamp(ddppo_distribution / self.config.n_sample, 1e-10)
+
+        return ddppo_distribution, prog

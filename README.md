@@ -61,8 +61,8 @@ We provide our trained models [here](https://drive.google.com/file/d/1HcD8s-tyBe
 Run the following to evaluate a trained model:
 
 ```bash
-export CUDA_VISIBLE_DEVICES=0
-python -m torch.distributed.launch --nproc_per_node=1 run.py \
+export CUDA_VISIBLE_DEVICES=1
+python -m torch.distributed.launch --nproc_per_node=1 --master_port=1300 run.py \
 --run-type eval \
 -c vlnce_baselines/config/CMA_AUG_DA_TUNE.yaml \
 -e $PATH_TO_SAVE_RESULT$ \
@@ -76,8 +76,8 @@ use_ddppo True
 STAGE1: Run the following for teacher forcing training on augmented data:
 
 ```bash
-export CUDA_VISIBLE_DEVICES=0,1,2
-python -m torch.distributed.launch --nproc_per_node=3 run.py \
+export CUDA_VISIBLE_DEVICES=1
+python -m torch.distributed.launch --nproc_per_node=1 --master_port=1300 run.py \
 -c vlnce_baselines/config/CMA_AUG.yaml \
 -e $PATH_TO_SAVE_RESULT$ \
 NUM_PROCESSES 6 \
@@ -87,15 +87,14 @@ DAGGER.BATCH_SIZE 8
 STAGE2: Run the following for dagger training to fine-tune the model:
 
 ```bash
-export CUDA_VISIBLE_DEVICES=0,1,2
-python -m torch.distributed.launch --nproc_per_node=3 run.py \
+export CUDA_VISIBLE_DEVICES=1
+python -m torch.distributed.launch --nproc_per_node=1 --master_port=1300 run.py \
 -c vlnce_baselines/config/CMA_AUG_DA_TUNE.yaml \
 -e $PATH_TO_SAVE_RESULT$ \
 NUM_PROCESSES 5 \
 DAGGER.BATCH_SIZE 8 \
 DAGGER.CKPT_TO_LOAD $PATH_TO_MODEL_FROM_STAGE1$
 ```
-
 
 ## Citation
 If you use or discuss WS-MGMap in your research, please consider citing the paper as follows
