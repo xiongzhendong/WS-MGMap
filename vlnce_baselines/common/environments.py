@@ -26,7 +26,7 @@ class VLNCEDaggerEnv(habitat.RLEnv):
         self.steppppp = 0
 
         if self.config.use_ddppo:
-            self.ddppo_action_maker = DDPPOActionMaker(config, self._env, config.lamda)
+            self.ddppo_action_maker = DDPPOActionMaker(config, self._env)
         else:
             self.gt_map_action_maker = GTMapActionMaker(config)
 

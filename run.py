@@ -103,7 +103,6 @@ def run_exp(exp_config: str,
 
     config.defrost()
     config.TASK_CONFIG.SEED = 200
-    # config.EVAL.EPISODE_COUNT = 300
     config.freeze()
 
     random.seed(config.TASK_CONFIG.SEED)

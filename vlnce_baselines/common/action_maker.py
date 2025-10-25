@@ -45,7 +45,7 @@ class GTMapActionMaker(ActionMaker):
 
 
 class DDPPOActionMaker(ActionMaker):
-    def __init__(self, config, _env, lamda=0) -> None:
+    def __init__(self, config, _env) -> None:
         super().__init__(config)
         self.utils = utils()
         self._env = _env
@@ -58,7 +58,7 @@ class DDPPOActionMaker(ActionMaker):
         self.n_object_classes = 27
         self.n_spatial_classes = 3
         model_path = 'data/pretrain_model/ddppo-models/gibson-4plus-mp3d-train-val-test-resnet50.pth'
-        self.l_policy = DdppoPolicy(path=model_path, lamda=lamda)
+        self.l_policy = DdppoPolicy(path=model_path)
         self.l_policy = self.l_policy.to(self.device)
         self.sg_reset()
 

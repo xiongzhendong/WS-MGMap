@@ -12,7 +12,7 @@ from habitat_baselines.rl.ddppo.policy.resnet_policy import PointNavResNetPolicy
 
 
 class DdppoPolicy(nn.Module):
-    def __init__(self, path, lamda=0):
+    def __init__(self, path):
         super().__init__()
         spaces = {
             'pointgoal_with_gps_compass': Box(
@@ -41,7 +41,6 @@ class DdppoPolicy(nn.Module):
             num_recurrent_layers=2,
             rnn_type='LSTM',
             backbone='resnet50',
-            lamda=lamda
         )
         self.actor_critic.load_state_dict(
             {
